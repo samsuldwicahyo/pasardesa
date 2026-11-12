@@ -1,0 +1,270 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  BUMDES_ADMIN
+  SELLER
+}
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PaymentMethod {
+  WHATSAPP
+  BANK_TRANSFER
+  QRIS
+  COD
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  UNPAID
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum FulfillmentStatus {
+  NEW
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderGroupStatus {
+  NEW
+  PARTIALLY_PAID
+  PAID
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentProofStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Tenant {
+  id           String      @id @default(cuid())
+  name         String
+  slug         String      @unique
+  description  String?
+  logoUrl      String?
+  bannerUrl    String?
+  address      String?
+  contactPhone String?
+  contactEmail String?
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  users       User[]
+  sellers     Seller[]
+  products    Product[]
+  orderGroups OrderGroup[]
+  orders      Order[]
+}
+
+model User {
+  id                 String         @id @default(cuid())
+  tenantId           String?
+  name               String
+  email              String         @unique
+  phone              String?
+  passwordHash       String
+  role               UserRole
+  isActive           Boolean        @default(true)
+  mustChangePassword Boolean        @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  tenant         Tenant?        @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  sellerProfile  Seller?
+  reviewedProofs PaymentProof[] @relation("ProofReviewer")
+
+  @@index([tenantId, role])
+}
+
+model Seller {
+  id             String                @id @default(cuid())
+  tenantId       String
+  userId         String                @unique
+  name           String
+  slug           String
+  description    String?
+  logoUrl        String?
+  phone          String?
+  whatsappNumber String?
+  address        String?
+  isActive       Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  paymentOptions SellerPaymentOption[]
+  products       Product[]
+  orders         Order[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, isActive])
+}
+
+model SellerPaymentOption {
+  id            String        @id @default(cuid())
+  sellerId      String
+  type          PaymentMethod
+  accountName   String?
+  accountNumber String?
+  bankName      String?
+  qrisImageUrl  String?
+  instructions  String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerId, type])
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  tenantId    String
+  sellerId    String
+  name        String
+  slug        String
+  description String?
+  sku         String?
+  price       Decimal       @db.Decimal(12, 2)
+  stock       Int           @default(0)
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seller     Seller        @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  images     ProductImage[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, status])
+  @@index([sellerId, status])
+}
+
+model ProductImage {
+  id                String   @id @default(cuid())
+  productId         String
+  imageUrl          String
+  cloudinaryPublicId String?
+  altText           String?
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+}
+
+model OrderGroup {
+  id            String           @id @default(cuid())
+  tenantId      String
+  code          String           @unique
+  buyerName     String
+  buyerPhone    String
+  buyerEmail    String?
+  buyerAddress  String
+  buyerNote     String?
+  paymentMethod PaymentMethod
+  status        OrderGroupStatus @default(NEW)
+  subtotal      Decimal          @db.Decimal(12, 2)
+  totalAmount   Decimal          @db.Decimal(12, 2)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([tenantId, createdAt])
+}
+
+model Order {
+  id                     String            @id @default(cuid())
+  orderGroupId           String
+  tenantId               String
+  sellerId               String
+  code                   String            @unique
+  sellerNameSnapshot     String
+  whatsappTargetSnapshot String?
+  paymentMethod          PaymentMethod
+  paymentStatus          PaymentStatus
+  fulfillmentStatus      FulfillmentStatus @default(NEW)
+  subtotal               Decimal           @db.Decimal(12, 2)
+  totalAmount            Decimal           @db.Decimal(12, 2)
+  paymentAccountName     String?
+  paymentAccountNumber   String?
+  paymentBankName        String?
+  paymentQrisImageUrl    String?
+  paymentInstructions    String?
+  note                   String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  orderGroup OrderGroup     @relation(fields: [orderGroupId], references: [id], onDelete: Cascade)
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seller     Seller         @relation(fields: [sellerId], references: [id], onDelete: Restrict)
+  items      OrderItem[]
+  proofs     PaymentProof[]
+
+  @@unique([orderGroupId, sellerId])
+  @@index([tenantId, paymentStatus, createdAt])
+  @@index([sellerId, paymentStatus, createdAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  productId   String?
+  productName String
+  productSlug String
+  imageUrl    String?
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  quantity    Int
+  lineTotal   Decimal  @db.Decimal(12, 2)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model PaymentProof {
+  id                 String             @id @default(cuid())
+  orderId            String
+  imageUrl           String
+  cloudinaryPublicId String?
+  note               String?
+  status             PaymentProofStatus @default(PENDING)
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  reviewNote         String?
+  createdAt          DateTime           @default(now())
+
+  order      Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("ProofReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([reviewedByUserId])
+}
